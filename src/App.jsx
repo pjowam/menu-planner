@@ -162,12 +162,16 @@ export default function App() {
   const [editId, setEditId] = useState(null); // id de la recette en cours d'édition
   const [addOrigin, setAddOrigin] = useState("recettes"); // onglet vers lequel revenir après le formulaire
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [placing, setPlacing] = useState(null); // recette en cours de glisser-déposer
+  const [dragPos, setDragPos] = useState(null); // { x, y } position de la pastille flottante
+  const [dropKey, setDropKey] = useState(null); // case actuellement survolée (sk)
   const [showMore, setShowMore] = useState(false); // sheet: déplier toutes les recettes
   const [recipeSort, setRecipeSort] = useState("alpha"); // alpha | slot | effort
   const [sortDir, setSortDir] = useState("asc"); // asc | desc
   const [recipeSearch, setRecipeSearch] = useState("");
   const searchRef = useRef(null);
   const inlineRef = useRef(null);
+  const appRef = useRef(null);
   const recipesScrollRef = useRef(null);
   const weekScrollRef = useRef(null);
   const swipeRef = useRef(null); // { x, y } point de départ du swipe
@@ -298,6 +302,79 @@ export default function App() {
     setSheet(null);
   };
 
+  // Glisser-déposer « recette -> case » : appui long sur une recette => elle décolle
+  // sous le doigt (pastille flottante) et on bascule sur la Semaine ; on glisse au-dessus
+  // d'un jour (case surlignée) puis on relâche pour déposer.
+  const dragRef = useRef(null); // { id, x0, y0, started, timer, recipe }
+
+  // Trouve la case (data-dropkey) sous le point (x, y) par géométrie.
+  const dropKeyAt = (x, y) => {
+    const els = document.querySelectorAll("[data-dropkey]");
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return el.getAttribute("data-dropkey");
+    }
+    return null;
+  };
+
+  const beginDrag = () => {
+    const d = dragRef.current;
+    if (!d) return;
+    d.started = true; d.timer = null;
+    lpFired.current = true; // empêche le clic "édition" de se déclencher au relâché
+    setSheet(null); setInline(null); setMenuOpen(false);
+    try { appRef.current?.setPointerCapture(d.id); } catch { /* capture best-effort */ }
+    setTab("semaine");
+    setPlacing(d.recipe);
+    setDragPos({ x: d.x0, y: d.y0 });
+    setDropKey(dropKeyAt(d.x0, d.y0));
+    if (navigator.vibrate) navigator.vibrate(12);
+  };
+
+  // Handlers posés sur chaque ligne de recette (phase pré-drag : on attend l'appui long).
+  const recipeDragHandlers = (r) => ({
+    onPointerDown: (e) => {
+      if (e.button != null && e.button > 0) return; // ignore clic droit/milieu
+      lpFired.current = false;
+      const timer = setTimeout(beginDrag, 450);
+      dragRef.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, started: false, timer, recipe: r };
+    },
+    onPointerMove: (e) => {
+      const d = dragRef.current;
+      if (!d || d.started) return;
+      // mouvement avant l'appui long => l'utilisateur fait défiler : on annule la prise
+      if (Math.abs(e.clientX - d.x0) > 8 || Math.abs(e.clientY - d.y0) > 8) {
+        clearTimeout(d.timer); dragRef.current = null;
+      }
+    },
+    onPointerUp: () => {
+      const d = dragRef.current;
+      if (d && !d.started) { clearTimeout(d.timer); dragRef.current = null; }
+    },
+    onPointerLeave: () => {
+      const d = dragRef.current;
+      if (d && !d.started) { clearTimeout(d.timer); dragRef.current = null; }
+    },
+    onContextMenu: (e) => e.preventDefault(),
+  });
+
+  // Handlers posés sur la racine .app (phase drag : le pointeur y est capturé).
+  const onAppPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || !d.started) return;
+    setDragPos({ x: e.clientX, y: e.clientY });
+    setDropKey(dropKeyAt(e.clientX, e.clientY));
+  };
+  const endDrag = (e) => {
+    const d = dragRef.current;
+    if (!d || !d.started) return;
+    const key = dropKeyAt(e.clientX, e.clientY);
+    try { appRef.current?.releasePointerCapture(d.id); } catch { /* noop */ }
+    if (key) setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
+    dragRef.current = null;
+    setPlacing(null); setDragPos(null); setDropKey(null);
+  };
+
   // Appui long → ouvre la fiche recette (édition). Appui court → action normale.
   const lpTimer = useRef(null);
   const lpFired = useRef(false);
@@ -319,6 +396,7 @@ export default function App() {
   // Swipe horizontal pour changer de semaine (ignore les bords pour ne pas gêner le geste retour)
   const EDGE = 28;
   const onWeekTouchStart = (e) => {
+    if (placing) { swipeRef.current = null; return; } // un drag est en cours
     const t = e.touches[0];
     if (t.clientX < EDGE || t.clientX > window.innerWidth - EDGE) { swipeRef.current = null; return; }
     swipeRef.current = { x: t.clientX, y: t.clientY, locked: false, active: false };
@@ -435,7 +513,14 @@ export default function App() {
   return (
     <>
       <style>{CSS}</style>
-      <div className="app" style={{ "--accent": ACCENT, "--accent-soft": ACCENT_SOFT, "--secondary": SECONDARY }}>
+      <div ref={appRef} className={`app${placing ? " dragging" : ""}`} style={{ "--accent": ACCENT, "--accent-soft": ACCENT_SOFT, "--secondary": SECONDARY }}
+        onPointerMove={onAppPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        {placing && dragPos && (
+          <div className="drag-ghost" style={{ left: dragPos.x, top: dragPos.y }}>
+            <Icon.utensils width={15} height={15} />
+            <span>{placing.name}</span>
+          </div>
+        )}
 
         {/* TOP BAR */}
         <header className="topbar">
@@ -470,7 +555,7 @@ export default function App() {
             <button className={`drawer-item${tab === "semaine" ? " on" : ""}`} onClick={() => { setTab("semaine"); setMenuOpen(false); }}>
               <Icon.cal width={20} height={20} /> Semaine
             </button>
-            <button className={`drawer-item${tab === "recettes" ? " on" : ""}`} onClick={() => { setTab("recettes"); setMenuOpen(false); }}>
+            <button className={`drawer-item${tab === "recettes" ? " on" : ""}`} onClick={() => { setPlacing(null); setTab("recettes"); setMenuOpen(false); }}>
               <Icon.book width={20} height={20} /> Recettes
             </button>
           </div>
@@ -479,7 +564,13 @@ export default function App() {
         {/* SCROLL CONTENT */}
         <main className="scroll">
           {tab === "semaine" && (
-            <div className="week-list" ref={weekScrollRef} onTouchStart={onWeekTouchStart} onTouchMove={onWeekTouchMove} onTouchEnd={onWeekTouchEnd}>
+            <div className={`week-list${placing ? " placing" : ""}`} ref={weekScrollRef} onTouchStart={onWeekTouchStart} onTouchMove={onWeekTouchMove} onTouchEnd={onWeekTouchEnd}>
+              {placing && (
+                <div className="place-banner">
+                  <Icon.utensils width={16} height={16} className="place-banner-icon" />
+                  <span className="place-banner-text">Glisse <strong>{placing.name}</strong> sur un jour, puis relâche</span>
+                </div>
+              )}
               <div className="week-nav">
                 <button className="weeknav-btn" onClick={() => setWeekOffset(o => o - 1)} aria-label="Semaine précédente">
                   <Icon.chevL width={18} height={18} />
@@ -511,6 +602,31 @@ export default function App() {
                       {slotsFor(day).map(slot => {
                         const entry = getEntry(day.key, slot.id);
                         const isInline = inline && inline.day === day.key && inline.slot === slot.id;
+
+                        // Glisser-déposer : chaque case devient une zone de dépôt
+                        // détectée par géométrie (data-dropkey) et surlignée au survol.
+                        if (placing) {
+                          const dk = sk(day.key, slot.id);
+                          return (
+                            <div
+                              key={slot.id}
+                              data-dropkey={dk}
+                              className={`cell drop-target${entry ? " occupied" : ""}${dropKey === dk ? " dragover" : ""}${slot.id === "lunchbox" ? " lunchbox" : ""}`}
+                            >
+                              {entry ? (
+                                <>
+                                  <span className="cell-value">{entry.value}</span>
+                                  <span className="drop-hint">remplacer</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Icon.plus width={15} height={15} />
+                                  <span className="drop-hint">{slot.label}</span>
+                                </>
+                              )}
+                            </div>
+                          );
+                        }
 
                         if (entry && !isInline) {
                           const isRecipe = entry.type === "recipe";
@@ -689,7 +805,9 @@ export default function App() {
                           <div key={l} className="letter-section" data-letter={l}>
                             <div className="letter-head">{l}</div>
                             {list.filter(r => letterOf(r) === l).map(r => (
-                              <button key={r.id} className="ritem" onClick={() => { setAddOrigin("recettes"); openEdit(r); }}>
+                              <button key={r.id} className="ritem"
+                                onClick={() => { if (lpFired.current) { lpFired.current = false; return; } setAddOrigin("recettes"); openEdit(r); }}
+                                {...recipeDragHandlers(r)} style={{ touchAction: "pan-y" }}>
                                 <span className="ritem-name">{r.name}</span>
                                 <span className="ritem-meta">
                                   {(r.slots || []).map(s => <span key={s} className="ritem-chip">{SLOT_META[s].emoji}</span>)}
@@ -717,7 +835,9 @@ export default function App() {
                     <div key={g.k} className="rgroup">
                       <div className="rgroup-title">{g.t} <span className="rgroup-count">{g.list.length}</span></div>
                       {g.list.map(r => (
-                        <button key={r.id} className="ritem" onClick={() => { setAddOrigin("recettes"); openEdit(r); }}>
+                        <button key={r.id} className="ritem"
+                          onClick={() => { if (lpFired.current) { lpFired.current = false; return; } setAddOrigin("recettes"); openEdit(r); }}
+                          {...recipeDragHandlers(r)} style={{ touchAction: "pan-y" }}>
                           <span className="ritem-name">{r.name}</span>
                           <span className="ritem-meta">
                             {(r.slots || []).map(s => <span key={s} className="ritem-chip">{SLOT_META[s].emoji}</span>)}
@@ -936,6 +1056,30 @@ body { background: #0e0e10; }
 .day.is-past { opacity:0.45; }
 .cell-remove { flex-shrink:0; width:22px; height:22px; border:none; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink2); background:var(--line); opacity:.7; cursor:pointer; transition:background .15s, color .15s, opacity .15s; }
 .cell-remove:active { background:var(--coral); color:#fff; opacity:1; }
+
+/* Glisser-déposer d'une recette sur la semaine */
+.app.dragging { user-select:none; -webkit-user-select:none; }
+.app.dragging * { cursor:grabbing; }
+.drag-ghost { position:fixed; z-index:100; transform:translate(-50%, -130%) rotate(-2deg); pointer-events:none;
+  display:flex; align-items:center; gap:7px; max-width:60vw; padding:8px 12px; border-radius:11px;
+  background:var(--coral); color:#fff; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  box-shadow:0 10px 26px rgba(255,92,77,.45); }
+.drag-ghost span { overflow:hidden; text-overflow:ellipsis; }
+.place-banner { position:sticky; top:0; z-index:11; display:flex; align-items:center; gap:8px; margin:0 0 10px;
+  background:var(--coral); color:#fff; border-radius:12px; padding:9px 12px; box-shadow:0 4px 14px rgba(255,92,77,.35); }
+.place-banner-icon { flex-shrink:0; }
+.place-banner-text { flex:1; min-width:0; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.place-banner-text strong { font-weight:700; }
+.week-list.placing .week-nav { position:static; }
+.cell.drop-target { justify-content:center; gap:6px; color:var(--coral); background:var(--soft);
+  box-shadow:inset 0 0 0 1.5px var(--coral); transition:transform .1s, background .1s, box-shadow .1s; }
+.cell.drop-target.occupied { background:var(--card); box-shadow:inset 0 0 0 1.5px var(--ink2); color:var(--ink); justify-content:space-between; }
+.cell.drop-target.occupied .cell-value { flex:0 1 auto; }
+/* case survolée pendant le drag */
+.cell.drop-target.dragover { background:var(--coral); color:#fff; box-shadow:none; transform:scale(1.02); }
+.cell.drop-target.dragover .drop-hint { color:#fff; opacity:.9; }
+.drop-hint { font-size:11.5px; font-weight:600; opacity:.85; }
+.cell.drop-target.occupied .drop-hint { color:var(--coral); text-transform:uppercase; letter-spacing:.04em; font-size:10.5px; }
 
 /* empty => input bar */
 .cell.inputbar { background:#FBF3EF; gap:6px; padding:5px 8px 5px 10px; transition:box-shadow .15s; box-shadow:inset 0 0 0 1px #E1D2CA; }
