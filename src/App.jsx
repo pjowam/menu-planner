@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 
 // Numéro de version affiché sur la home — à incrémenter à chaque déploiement
 // pour vérifier d'un coup d'œil que la PWA a bien chargé la dernière version.
-const APP_VERSION = "0.6";
+const APP_VERSION = "0.7";
 
 const ALL = "toute";
 const SEASON_META = {
@@ -335,10 +335,12 @@ export default function App() {
     d.started = true; d.moved = false; d.timer = null;
     lpFired.current = true; // empêche le clic "édition" de se déclencher au relâché
     setSheet(null); setInline(null); setMenuOpen(false);
-    setTab("semaine");
+    // On NE change PAS d'onglet : la ligne touchée reste montée et intacte (sinon
+    // son retrait émettrait un touchcancel qui tuerait le drag). Les jours sont
+    // proposés via un calque (.drop-overlay) par-dessus la vue courante.
     setPlacing(d.recipe);
     setDragPos({ x: d.x0, y: d.y0 });
-    setDropKey(null); // pas de cible tant qu'on n'a pas glissé sur la semaine
+    setDropKey(null); // pas de cible tant qu'on n'a pas glissé sur un jour
     if (navigator.vibrate) navigator.vibrate(12);
   };
 
@@ -365,8 +367,11 @@ export default function App() {
     if (!d) return;
     if (!d.started) { cancelPress(); return; }
     const key = d.moved ? dropKeyAt(x, y) : null;
-    if (key) setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
     dragRef.current = null;
+    if (key) {
+      setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
+      setTab("semaine"); // on montre le résultat sur la semaine
+    }
     setPlacing(null); setDragPos(null); setDropKey(null);
   };
 
@@ -554,6 +559,36 @@ export default function App() {
           <div className="drag-ghost" style={{ left: dragPos.x, top: dragPos.y }}>
             <Icon.utensils width={15} height={15} />
             <span>{placing.name}</span>
+          </div>
+        )}
+
+        {/* CALQUE DE DÉPÔT — les jours deviennent des cibles, par-dessus la vue
+            courante, sans toucher à l'élément en cours de glisser. */}
+        {placing && (
+          <div className="drop-overlay">
+            <div className="drop-overlay-head">
+              Dépose <strong>{placing.name}</strong> sur un jour
+              <span className="drop-overlay-week">{isCurrentWeek ? "cette semaine" : weekLabel}</span>
+            </div>
+            <div className="drop-overlay-days">
+              {DAYS.map((day, i) => (
+                <div key={day.key} className={`drop-day${day.weekend ? " weekend" : ""}`}>
+                  <div className="drop-day-label"><b>{day.short}</b> {weekDates[i].getDate()}</div>
+                  <div className="drop-day-slots">
+                    {slotsFor(day).map(slot => {
+                      const entry = getEntry(day.key, slot.id);
+                      const dk = sk(day.key, slot.id);
+                      return (
+                        <div key={slot.id} data-dropkey={dk}
+                          className={`drop-pill${entry ? " occupied" : ""}${dropKey === dk ? " dragover" : ""}`}>
+                          {entry ? entry.value : slot.label}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1103,6 +1138,20 @@ body { background: #0e0e10; }
   background:var(--coral); color:#fff; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   box-shadow:0 10px 26px rgba(255,92,77,.45); }
 .drag-ghost span { overflow:hidden; text-overflow:ellipsis; }
+/* Calque de dépôt : les 7 jours en cibles, par-dessus la vue courante */
+.drop-overlay { position:fixed; inset:0; z-index:60; background:rgba(14,14,16,.74); backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); display:flex; flex-direction:column; padding:14px calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left)); gap:10px; touch-action:none; }
+.drop-overlay-head { flex-shrink:0; color:#fff; font-size:14px; text-align:center; padding:4px 6px; line-height:1.3; }
+.drop-overlay-head strong { font-weight:700; }
+.drop-overlay-week { display:block; font-size:11.5px; opacity:.6; margin-top:2px; }
+.drop-overlay-days { flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; }
+.drop-day { flex:1; min-height:0; background:rgba(255,255,255,.07); border-radius:13px; padding:6px 10px; display:flex; align-items:center; gap:10px; }
+.drop-day.weekend { background:rgba(255,92,77,.13); }
+.drop-day-label { width:42px; flex-shrink:0; color:#fff; font-size:12px; text-align:center; opacity:.85; }
+.drop-day-label b { display:block; font-size:13px; }
+.drop-day-slots { flex:1; display:flex; gap:7px; height:100%; }
+.drop-pill { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; padding:0 8px; border-radius:10px; background:var(--soft); color:var(--coral); font-size:12px; font-weight:600; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-shadow:inset 0 0 0 1.5px var(--coral); transition:transform .1s, background .1s, box-shadow .1s; }
+.drop-pill.occupied { background:#fff; color:var(--ink); box-shadow:inset 0 0 0 1.5px var(--ink2); }
+.drop-pill.dragover { background:var(--coral); color:#fff; box-shadow:none; transform:scale(1.05); }
 .place-banner { position:sticky; top:0; z-index:11; display:flex; align-items:center; gap:8px; margin:0 0 10px;
   background:var(--coral); color:#fff; border-radius:12px; padding:9px 12px; box-shadow:0 4px 14px rgba(255,92,77,.35); }
 .place-banner-icon { flex-shrink:0; }
