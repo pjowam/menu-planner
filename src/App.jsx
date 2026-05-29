@@ -307,6 +307,15 @@ export default function App() {
   // d'un jour (case surlignée) puis on relâche pour déposer.
   const dragRef = useRef(null); // { id, x0, y0, started, timer, recipe }
 
+  // Pendant un drag, on bloque le défilement natif (sinon le navigateur "vole" le
+  // pointeur via un pointercancel et le drag est perdu si on bouge vite). L'écouteur
+  // doit être non-passif pour que preventDefault() soit pris en compte.
+  useEffect(() => {
+    const stop = (e) => { if (dragRef.current?.started) e.preventDefault(); };
+    document.addEventListener("touchmove", stop, { passive: false });
+    return () => document.removeEventListener("touchmove", stop);
+  }, []);
+
   // Trouve la case (data-dropkey) sous le point (x, y) par géométrie.
   const dropKeyAt = (x, y) => {
     const els = document.querySelectorAll("[data-dropkey]");
