@@ -1,5 +1,9 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 
+// Numéro de version affiché sur la home — à incrémenter à chaque déploiement
+// pour vérifier d'un coup d'œil que la PWA a bien chargé la dernière version.
+const APP_VERSION = "0.5";
+
 const ALL = "toute";
 const SEASON_META = {
   printemps: { label: "Printemps", emoji: "🌿" },
@@ -549,7 +553,7 @@ export default function App() {
                 <button className="burger" onClick={() => setMenuOpen(true)} aria-label="Menu">
                   <Icon.menu width={22} height={22} />
                 </button>
-                <div className="brand brand-center">Menu</div>
+                <div className="brand brand-center">Menu<span className="brand-ver">v{APP_VERSION}</span></div>
                 <div className="topbar-spacer" />
               </>
             )}
@@ -1017,6 +1021,7 @@ body { background: #0e0e10; }
 .burger:active { background:rgba(255,255,255,0.35); }
 .brand { font-family:'Baloo 2',sans-serif; font-size:22px; font-weight:700; letter-spacing:-0.3px; color:#fff; }
 .brand-center { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap; }
+.brand-ver { font-family:'Quicksand',sans-serif; font-size:10px; font-weight:600; letter-spacing:0; vertical-align:super; margin-left:4px; opacity:.6; }
 .topbar-spacer { width:38px; flex-shrink:0; margin-left:auto; }
 .season-tag { font-size:18px; margin-left:auto; background:rgba(255,255,255,0.2); width:38px; height:38px; border-radius:12px; display:flex; align-items:center; justify-content:center; }
 .week-nav { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:4px; margin:0 0 10px; background:var(--card); border-radius:12px; padding:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
