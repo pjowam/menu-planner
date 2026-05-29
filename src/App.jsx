@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 
 // Numéro de version affiché sur la home — à incrémenter à chaque déploiement
 // pour vérifier d'un coup d'œil que la PWA a bien chargé la dernière version.
-const APP_VERSION = "0.5";
+const APP_VERSION = "0.6";
 
 const ALL = "toute";
 const SEASON_META = {
@@ -306,19 +306,12 @@ export default function App() {
     setSheet(null);
   };
 
-  // Glisser-déposer « recette -> case » : appui long sur une recette => elle décolle
-  // sous le doigt (pastille flottante) et on bascule sur la Semaine ; on glisse au-dessus
-  // d'un jour (case surlignée) puis on relâche pour déposer.
-  const dragRef = useRef(null); // { id, x0, y0, started, timer, recipe }
-
-  // Pendant un drag, on bloque le défilement natif (sinon le navigateur "vole" le
-  // pointeur via un pointercancel et le drag est perdu si on bouge vite). L'écouteur
-  // doit être non-passif pour que preventDefault() soit pris en compte.
-  useEffect(() => {
-    const stop = (e) => { if (dragRef.current?.started) e.preventDefault(); };
-    document.addEventListener("touchmove", stop, { passive: false });
-    return () => document.removeEventListener("touchmove", stop);
-  }, []);
+  // Glisser-déposer « recette -> case » via événements tactiles/souris natifs.
+  // Sur mobile on écoute touchmove/touchend sur `document` : ils survivent au
+  // changement d'onglet (l'élément source disparaît), là où les pointer events
+  // provoquaient un pointercancel qui faisait perdre le drag. Le touchmove est
+  // non-passif pour pouvoir annuler le défilement natif pendant le glisser.
+  const dragRef = useRef(null); // { kind:'touch'|'mouse', id, x0, y0, started, moved, recipe, timer }
 
   // Trouve la case (data-dropkey) sous le point (x, y) par géométrie.
   const dropKeyAt = (x, y) => {
@@ -330,63 +323,93 @@ export default function App() {
     return null;
   };
 
+  const cancelPress = () => {
+    const d = dragRef.current;
+    if (d?.timer) clearTimeout(d.timer);
+    dragRef.current = null;
+  };
+
   const beginDrag = () => {
     const d = dragRef.current;
     if (!d) return;
-    d.started = true; d.timer = null;
+    d.started = true; d.moved = false; d.timer = null;
     lpFired.current = true; // empêche le clic "édition" de se déclencher au relâché
     setSheet(null); setInline(null); setMenuOpen(false);
-    try { appRef.current?.setPointerCapture(d.id); } catch { /* capture best-effort */ }
     setTab("semaine");
     setPlacing(d.recipe);
     setDragPos({ x: d.x0, y: d.y0 });
-    setDropKey(dropKeyAt(d.x0, d.y0));
+    setDropKey(null); // pas de cible tant qu'on n'a pas glissé sur la semaine
     if (navigator.vibrate) navigator.vibrate(12);
   };
 
-  // Handlers posés sur chaque ligne de recette (phase pré-drag : on attend l'appui long).
-  const recipeDragHandlers = (r) => ({
-    onPointerDown: (e) => {
-      if (e.button != null && e.button > 0) return; // ignore clic droit/milieu
-      lpFired.current = false;
-      const timer = setTimeout(beginDrag, 450);
-      dragRef.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, started: false, timer, recipe: r };
-    },
-    onPointerMove: (e) => {
-      const d = dragRef.current;
-      if (!d || d.started) return;
-      // mouvement avant l'appui long => l'utilisateur fait défiler : on annule la prise
-      if (Math.abs(e.clientX - d.x0) > 8 || Math.abs(e.clientY - d.y0) > 8) {
-        clearTimeout(d.timer); dragRef.current = null;
-      }
-    },
-    onPointerUp: () => {
-      const d = dragRef.current;
-      if (d && !d.started) { clearTimeout(d.timer); dragRef.current = null; }
-    },
-    onPointerLeave: () => {
-      const d = dragRef.current;
-      if (d && !d.started) { clearTimeout(d.timer); dragRef.current = null; }
-    },
-    onContextMenu: (e) => e.preventDefault(),
-  });
-
-  // Handlers posés sur la racine .app (phase drag : le pointeur y est capturé).
-  const onAppPointerMove = (e) => {
-    const d = dragRef.current;
-    if (!d || !d.started) return;
-    setDragPos({ x: e.clientX, y: e.clientY });
-    setDropKey(dropKeyAt(e.clientX, e.clientY));
+  // Amorce l'appui long (commun tactile/souris).
+  const startPress = (r, kind, id, x, y) => {
+    cancelPress();
+    lpFired.current = false;
+    dragRef.current = { kind, id, x0: x, y0: y, started: false, moved: false, recipe: r, timer: setTimeout(beginDrag, 450) };
   };
-  const endDrag = (e) => {
+  const dragMove = (x, y) => {
     const d = dragRef.current;
-    if (!d || !d.started) return;
-    const key = dropKeyAt(e.clientX, e.clientY);
-    try { appRef.current?.releasePointerCapture(d.id); } catch { /* noop */ }
+    if (!d) return;
+    if (!d.started) {
+      // mouvement avant l'appui long => défilement de la liste : on annule la prise
+      if (Math.abs(x - d.x0) > 10 || Math.abs(y - d.y0) > 10) cancelPress();
+      return;
+    }
+    d.moved = true;
+    setDragPos({ x, y });
+    setDropKey(dropKeyAt(x, y));
+  };
+  const dragEnd = (x, y) => {
+    const d = dragRef.current;
+    if (!d) return;
+    if (!d.started) { cancelPress(); return; }
+    const key = d.moved ? dropKeyAt(x, y) : null;
     if (key) setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
     dragRef.current = null;
     setPlacing(null); setDragPos(null); setDropKey(null);
   };
+
+  // Écouteurs globaux : le drag continue même après le changement d'onglet.
+  useEffect(() => {
+    const findTouch = (list, id) => { for (const t of list) if (t.identifier === id) return t; return null; };
+    const onTouchMove = (e) => {
+      const d = dragRef.current;
+      if (!d || d.kind !== "touch") return;
+      const t = findTouch(e.touches, d.id);
+      if (!t) return;
+      if (d.started) e.preventDefault(); // bloque le défilement natif pendant le drag
+      dragMove(t.clientX, t.clientY);
+    };
+    const onTouchEnd = (e) => {
+      const d = dragRef.current;
+      if (!d || d.kind !== "touch") return;
+      const t = findTouch(e.changedTouches, d.id);
+      if (!t) return;
+      dragEnd(t.clientX, t.clientY);
+    };
+    const onMouseMove = (e) => { const d = dragRef.current; if (d && d.kind === "mouse") dragMove(e.clientX, e.clientY); };
+    const onMouseUp = (e) => { const d = dragRef.current; if (d && d.kind === "mouse") dragEnd(e.clientX, e.clientY); };
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    document.addEventListener("touchend", onTouchEnd);
+    document.addEventListener("touchcancel", onTouchEnd);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("touchend", onTouchEnd);
+      document.removeEventListener("touchcancel", onTouchEnd);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
+  // Handlers posés sur chaque ligne de recette (amorce de l'appui long).
+  const recipeDragHandlers = (r) => ({
+    onTouchStart: (e) => { const t = e.changedTouches[0]; startPress(r, "touch", t.identifier, t.clientX, t.clientY); },
+    onMouseDown: (e) => { if (e.button > 0) return; startPress(r, "mouse", "mouse", e.clientX, e.clientY); },
+    onContextMenu: (e) => e.preventDefault(),
+  });
 
   // Appui long → ouvre la fiche recette (édition). Appui court → action normale.
   const lpTimer = useRef(null);
@@ -526,8 +549,7 @@ export default function App() {
   return (
     <>
       <style>{CSS}</style>
-      <div ref={appRef} className={`app${placing ? " dragging" : ""}`} style={{ "--accent": ACCENT, "--accent-soft": ACCENT_SOFT, "--secondary": SECONDARY }}
-        onPointerMove={onAppPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+      <div ref={appRef} className={`app${placing ? " dragging" : ""}`} style={{ "--accent": ACCENT, "--accent-soft": ACCENT_SOFT, "--secondary": SECONDARY }}>
         {placing && dragPos && (
           <div className="drag-ghost" style={{ left: dragPos.x, top: dragPos.y }}>
             <Icon.utensils width={15} height={15} />
@@ -1171,7 +1193,7 @@ body { background: #0e0e10; }
 .rgroup { margin-bottom:14px; }
 .rgroup-title { font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--ink2); margin:0 2px 7px; display:flex; align-items:center; gap:7px; }
 .rgroup-count { background:var(--soft); color:var(--coral); border-radius:9px; padding:1px 7px; font-size:10px; letter-spacing:0; }
-.ritem { width:100%; background:var(--card); border:none; border-radius:12px; padding:12px 14px; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 2px 8px rgba(0,0,0,0.05); cursor:pointer; font-family:inherit; text-align:left; transition:transform .1s; }
+.ritem { width:100%; background:var(--card); border:none; border-radius:12px; padding:12px 14px; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 2px 8px rgba(0,0,0,0.05); cursor:pointer; font-family:inherit; text-align:left; transition:transform .1s; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
 .ritem:active { transform:scale(0.98); }
 .ritem-name { font-size:15px; font-weight:600; color:var(--ink); }
 .ritem-meta { display:flex; align-items:center; gap:6px; }
