@@ -934,8 +934,8 @@ body { background: #0e0e10; }
 .cell-flag { color:var(--ink2); flex-shrink:0; }
 /* jours passés atténués */
 .day.is-past { opacity:0.45; }
-.cell-remove { flex-shrink:0; width:22px; height:22px; border:none; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--coral); background:var(--accent-soft); cursor:pointer; transition:background .15s; }
-.cell-remove:active { background:var(--coral); color:#fff; }
+.cell-remove { flex-shrink:0; width:22px; height:22px; border:none; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--ink2); background:var(--line); opacity:.7; cursor:pointer; transition:background .15s, color .15s, opacity .15s; }
+.cell-remove:active { background:var(--coral); color:#fff; opacity:1; }
 
 /* empty => input bar */
 .cell.inputbar { background:#FBF3EF; gap:6px; padding:5px 8px 5px 10px; transition:box-shadow .15s; box-shadow:inset 0 0 0 1px #E1D2CA; }
