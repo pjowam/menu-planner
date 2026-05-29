@@ -993,6 +993,7 @@ export default function App() {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Baloo+2:wght@500;600;700;800&display=swap');
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior: none; }
 body { background: #0e0e10; }
 .app { --bg:#FFF6F4; --coral:#FF5C4D; --card:#FFFFFF; --ink:#2A2522; --ink2:#9A9490; --line:#F0ECE8; --soft:#FFF1EE;
   font-family:'Quicksand',sans-serif; background:var(--bg); color:var(--ink);
@@ -1017,7 +1018,8 @@ body { background: #0e0e10; }
 .week-range { font-size:12px; font-weight:600; color:var(--ink2); }
 
 /* SCROLL */
-.scroll { flex:1; overflow-y:auto; padding:12px 16px 0; }
+.scroll { flex:1; overflow-y:auto; overscroll-behavior:contain; padding:12px 16px 0; }
+.app.dragging, .app.dragging .scroll { touch-action:none; overscroll-behavior:none; }
 .scroll-foot { height:20px; }
 
 /* DAY — flat on background, separated by divider */
