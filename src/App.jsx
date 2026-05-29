@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 
 // Numéro de version affiché sur la home — à incrémenter à chaque déploiement
 // pour vérifier d'un coup d'œil que la PWA a bien chargé la dernière version.
-const APP_VERSION = "0.8";
+const APP_VERSION = "0.9";
 
 const ALL = "toute";
 const SEASON_META = {
@@ -257,6 +257,13 @@ export default function App() {
     setSheet({ day, slot, label, dayLabel });
     setQuery(""); setShowMore(false);
   };
+  // Ouvre la sheet de recherche en mode « pose libre » (sans créneau) : on y glisse
+  // une recette vers n'importe quel jour. browse=true => pas de cible pré-choisie.
+  const openSheetBrowse = () => {
+    setInline(null); setInlineText("");
+    setSheet({ browse: true, day: null, slot: null, label: "Mes recettes", dayLabel: null });
+    setQuery(""); setShowMore(false);
+  };
 
   const saveInline = () => {
     if (!inline) return;
@@ -334,10 +341,10 @@ export default function App() {
     if (!d) return;
     d.started = true; d.moved = false; d.timer = null;
     lpFired.current = true; // empêche le clic "édition" de se déclencher au relâché
-    setSheet(null); setInline(null); setMenuOpen(false);
-    // On NE change PAS d'onglet : la ligne touchée reste montée et intacte (sinon
-    // son retrait émettrait un touchcancel qui tuerait le drag). Les jours sont
-    // proposés via un calque (.drop-overlay) par-dessus la vue courante.
+    setInline(null); setMenuOpen(false);
+    // La recette est prise depuis la sheet (qui se replie via la classe .collapsed)
+    // et déposée sur les VRAIES cases de la semaine en dessous. La sheet reste montée
+    // (elle glisse juste hors champ) donc la ligne touchée n'est pas retirée du DOM.
     setPlacing(d.recipe);
     setDragPos({ x: d.x0, y: d.y0 });
     setDropKey(null); // pas de cible tant qu'on n'a pas glissé sur un jour
@@ -368,11 +375,9 @@ export default function App() {
     if (!d.started) { cancelPress(); return; }
     const key = d.moved ? dropKeyAt(x, y) : null;
     dragRef.current = null;
-    if (key) {
-      setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
-      setTab("semaine"); // on montre le résultat sur la semaine
-    }
+    if (key) setMenu(p => ({ ...p, [key]: { type: "recipe", value: d.recipe.name, seasons: d.recipe.seasons } }));
     setPlacing(null); setDragPos(null); setDropKey(null);
+    setSheet(null); // referme la sheet (dépôt réussi ou relâché dans le vide)
   };
 
   // Écouteurs globaux : le drag continue même après le changement d'onglet.
@@ -562,52 +567,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CALQUE DE DÉPÔT — les jours deviennent des cibles, par-dessus la vue
-            courante, sans toucher à l'élément en cours de glisser. */}
-        {placing && (
-          <div className="drop-overlay">
-            <div className="drop-banner">
-              <Icon.utensils width={16} height={16} />
-              <span>Dépose <strong>{placing.name}</strong> sur un jour</span>
-            </div>
-            <div className="week-nav drop-week-nav">
-              <span className="week-center">
-                <span className="week-title">{isCurrentWeek ? "Cette semaine" : weekOffset === -1 ? "Sem. dernière" : weekOffset === 1 ? "Sem. prochaine" : "Semaine"}</span>
-                <span className="week-range">· {weekLabel}</span>
-              </span>
-            </div>
-            <div className="drop-days">
-              {DAYS.map((day, i) => {
-                const date = weekDates[i];
-                const isToday = date.toDateString() === new Date().toDateString();
-                return (
-                  <section key={day.key} className={`day${day.weekend ? " weekend" : ""}${isToday ? " is-today" : ""}`}>
-                    <div className="day-tab">
-                      <span className="day-tab-name">{day.short}</span>
-                      <span className="day-tab-num">{date.getDate()}</span>
-                    </div>
-                    <div className="day-rows">
-                      {slotsFor(day).map(slot => {
-                        const entry = getEntry(day.key, slot.id);
-                        const dk = sk(day.key, slot.id);
-                        return (
-                          <div key={slot.id} data-dropkey={dk}
-                            className={`cell drop-target${entry ? " occupied" : ""}${dropKey === dk ? " dragover" : ""}${slot.id === "lunchbox" ? " lunchbox" : ""}`}>
-                            {entry ? (
-                              <><span className="cell-value">{entry.value}</span><span className="drop-hint">remplacer</span></>
-                            ) : (
-                              <><Icon.plus width={15} height={15} /><span className="drop-hint">{slot.label}</span></>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* TOP BAR */}
         <header className="topbar">
@@ -628,7 +587,9 @@ export default function App() {
                   <Icon.menu width={22} height={22} />
                 </button>
                 <div className="brand brand-center">Menu<span className="brand-ver">v{APP_VERSION}</span></div>
-                <div className="topbar-spacer" />
+                {tab === "semaine"
+                  ? <button className="burger burger-right" onClick={openSheetBrowse} aria-label="Glisser une recette vers la semaine"><Icon.book width={21} height={21} /></button>
+                  : <div className="topbar-spacer" />}
               </>
             )}
           </div>
@@ -892,9 +853,7 @@ export default function App() {
                           <div key={l} className="letter-section" data-letter={l}>
                             <div className="letter-head">{l}</div>
                             {list.filter(r => letterOf(r) === l).map(r => (
-                              <button key={r.id} className="ritem"
-                                onClick={() => { if (lpFired.current) { lpFired.current = false; return; } setAddOrigin("recettes"); openEdit(r); }}
-                                {...recipeDragHandlers(r)} style={{ touchAction: "pan-y" }}>
+                              <button key={r.id} className="ritem" onClick={() => { setAddOrigin("recettes"); openEdit(r); }}>
                                 <span className="ritem-name">{r.name}</span>
                                 <span className="ritem-meta">
                                   {(r.slots || []).map(s => <span key={s} className="ritem-chip">{SLOT_META[s].emoji}</span>)}
@@ -922,9 +881,7 @@ export default function App() {
                     <div key={g.k} className="rgroup">
                       <div className="rgroup-title">{g.t} <span className="rgroup-count">{g.list.length}</span></div>
                       {g.list.map(r => (
-                        <button key={r.id} className="ritem"
-                          onClick={() => { if (lpFired.current) { lpFired.current = false; return; } setAddOrigin("recettes"); openEdit(r); }}
-                          {...recipeDragHandlers(r)} style={{ touchAction: "pan-y" }}>
+                        <button key={r.id} className="ritem" onClick={() => { setAddOrigin("recettes"); openEdit(r); }}>
                           <span className="ritem-name">{r.name}</span>
                           <span className="ritem-meta">
                             {(r.slots || []).map(s => <span key={s} className="ritem-chip">{SLOT_META[s].emoji}</span>)}
@@ -945,13 +902,13 @@ export default function App() {
 
         {/* SHEET */}
         {sheet && <>
-          <div className="scrim" onClick={() => setSheet(null)} />
-          <div className="sheet">
+          {!placing && <div className="scrim" onClick={() => setSheet(null)} />}
+          <div className={`sheet${placing ? " collapsed" : ""}`}>
             <div className="grabber" />
             <div className="sheet-head">
               <div className="sheet-title-row">
                 <span className="sheet-title">{sheet.label}</span>
-                <span className="sheet-sub">· {sheet.dayLabel}</span>
+                {sheet.dayLabel && <span className="sheet-sub">· {sheet.dayLabel}</span>}
               </div>
               <button className="sheet-close" onClick={() => setSheet(null)}><Icon.x width={17} height={17} /></button>
             </div>
@@ -964,16 +921,19 @@ export default function App() {
               {query && <button className="searchbar-clear" onClick={() => setQuery("")}><Icon.x width={14} height={14} /></button>}
             </div>
 
+
             {query.trim() && (() => {
               const q = query.trim().toLowerCase();
               const exactMatch = recipes.some(r => r.name.toLowerCase() === q);
               if (exactMatch) return null;
               return (
                 <div className="newentry">
-                  <button className="newentry-btn use" onClick={() => useFreeTextFromSheet(query)}>
-                    <Icon.pen width={14} height={14} />
-                    <span>Utiliser pour ce repas</span>
-                  </button>
+                  {!sheet.browse && (
+                    <button className="newentry-btn use" onClick={() => useFreeTextFromSheet(query)}>
+                      <Icon.pen width={14} height={14} />
+                      <span>Utiliser pour ce repas</span>
+                    </button>
+                  )}
                   <button className="newentry-btn save" onClick={() => saveAsRecipeFromSheet(query)}>
                     <Icon.plus width={15} height={15} />
                     <span>Enregistrer la recette</span>
@@ -993,7 +953,8 @@ export default function App() {
                 const alpha = (a, b) => a.name.localeCompare(b.name);
 
                 // 1. Recommandé : conseillées pour ce slot, de saison/toute l'année, non planifiées
-                const recommended = filtered
+                // (pas de reco par créneau en mode « pose libre » : aucun créneau ciblé)
+                const recommended = sheet.browse ? [] : filtered
                   .filter(r => !plannedNames.has(r.name) && inSeason(r) && (r.slots || []).includes(kind))
                   .sort(alpha)
                   .slice(0, 10);
@@ -1015,9 +976,9 @@ export default function App() {
                   .sort(alpha);
 
                 const Card = (r, cls = "") => (
-                  <button key={r.id} className={`rcard${cls}`}
-                    onClick={() => { if (lpFired.current) { lpFired.current = false; return; } pickRecipe(r); }}
-                    {...longPress(() => openRecipeByName(r.name))}>
+                  <button key={r.id} className={`rcard${cls}`} style={{ touchAction: "pan-y" }}
+                    onClick={() => { if (lpFired.current) { lpFired.current = false; return; } sheet.browse ? openRecipeByName(r.name) : pickRecipe(r); }}
+                    {...recipeDragHandlers(r)}>
                     <span className="rcard-name">{r.name}</span>
                     <span className="rcard-tag">{r.effort === "pouce" ? EFFORT_META.pouce.emoji : ""}{isAllYear(r) ? "" : r.seasons.map(s => SEASON_META[s].emoji).join("")}</span>
                   </button>
@@ -1080,20 +1041,20 @@ export default function App() {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&family=Baloo+2:wght@500;600;700;800&display=swap');
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body { overscroll-behavior: none; }
+html, body { height:100%; overflow:hidden; overscroll-behavior:none; }
 body { background: #0e0e10; }
 .app { --bg:#FFF6F4; --coral:#FF5C4D; --card:#FFFFFF; --ink:#2A2522; --ink2:#9A9490; --line:#F0ECE8; --soft:#FFF1EE;
   font-family:'Quicksand',sans-serif; background:var(--bg); color:var(--ink);
-  max-width:430px; margin:0 auto; height:100vh; max-height:932px; display:flex; flex-direction:column;
+  max-width:430px; margin:0 auto; height:100vh; height:100dvh; max-height:932px; display:flex; flex-direction:column;
   position:relative; overflow:hidden; box-shadow:0 0 60px rgba(0,0,0,0.3); }
 .app *::-webkit-scrollbar { width:0; }
 
 /* TOPBAR — coral header zone */
-.topbar { background:var(--coral); padding:10px 16px 12px; flex-shrink:0; padding-top:max(10px,env(safe-area-inset-top)); }
+.topbar { background:var(--coral); padding:6px 16px 7px; flex-shrink:0; padding-top:max(6px,env(safe-area-inset-top)); }
 .topbar-row { display:flex; align-items:center; gap:10px; position:relative; }
-.burger { width:38px; height:38px; flex-shrink:0; border:none; background:rgba(255,255,255,0.2); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:12px; transition:background .12s; }
+.burger { width:34px; height:34px; flex-shrink:0; border:none; background:rgba(255,255,255,0.2); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; border-radius:11px; transition:background .12s; }
 .burger:active { background:rgba(255,255,255,0.35); }
-.brand { font-family:'Baloo 2',sans-serif; font-size:22px; font-weight:700; letter-spacing:-0.3px; color:#fff; }
+.brand { font-family:'Baloo 2',sans-serif; font-size:19px; font-weight:700; letter-spacing:-0.3px; color:#fff; }
 .brand-center { position:absolute; left:50%; transform:translateX(-50%); white-space:nowrap; }
 .brand-ver { font-family:'Quicksand',sans-serif; font-size:10px; font-weight:600; letter-spacing:0; vertical-align:super; margin-left:4px; opacity:.6; }
 .topbar-spacer { width:38px; flex-shrink:0; margin-left:auto; }
@@ -1155,17 +1116,8 @@ body { background: #0e0e10; }
   background:var(--coral); color:#fff; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   box-shadow:0 10px 26px rgba(255,92,77,.45); }
 .drag-ghost span { overflow:hidden; text-overflow:ellipsis; }
-/* Calque de dépôt : même look que la home (cartes-jours + cellules) */
-.drop-overlay { position:absolute; inset:0; z-index:60; background:var(--bg); display:flex; flex-direction:column;
-  padding:12px 16px calc(12px + env(safe-area-inset-bottom)); gap:10px; touch-action:none; }
-.drop-banner { flex-shrink:0; display:flex; align-items:center; gap:8px; background:var(--coral); color:#fff;
-  border-radius:12px; padding:9px 12px; font-size:13.5px; box-shadow:0 4px 14px rgba(255,92,77,.3); }
-.drop-banner strong { font-weight:700; }
-.drop-week-nav { position:static; margin:0; flex-shrink:0; }
-.drop-days { flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; overscroll-behavior:contain; }
-.drop-days .day { flex:1; min-height:0; padding:7px 2px; }
-.drop-days .day-rows { justify-content:center; gap:5px; }
-.drop-days .cell { min-height:34px; }
+/* Glisser une recette depuis la sheet de recherche vers la semaine */
+.rcard { user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
 .place-banner { position:sticky; top:0; z-index:11; display:flex; align-items:center; gap:8px; margin:0 0 10px;
   background:var(--coral); color:#fff; border-radius:12px; padding:9px 12px; box-shadow:0 4px 14px rgba(255,92,77,.35); }
 .place-banner-icon { flex-shrink:0; }
@@ -1266,7 +1218,8 @@ body { background: #0e0e10; }
 
 /* SCRIM + SHEET */
 .scrim { position:absolute; inset:0; background:rgba(40,20,15,0.45); z-index:40; animation:fade .2s ease; }
-.sheet { position:absolute; left:0; right:0; bottom:0; background:var(--card); border-radius:28px 28px 0 0; z-index:50; height:90%; max-height:90%; display:flex; flex-direction:column; animation:rise .3s cubic-bezier(.32,.72,0,1); padding-bottom:max(14px,env(safe-area-inset-bottom)); }
+.sheet { position:absolute; left:0; right:0; bottom:0; background:var(--card); border-radius:28px 28px 0 0; z-index:50; height:90%; max-height:90%; display:flex; flex-direction:column; animation:rise .3s cubic-bezier(.32,.72,0,1); transition:transform .25s cubic-bezier(.32,.72,0,1); padding-bottom:max(14px,env(safe-area-inset-bottom)); }
+.sheet.collapsed { transform:translateY(105%); box-shadow:none; animation:none; }
 .grabber { width:40px; height:4px; background:var(--line); border-radius:2px; margin:10px auto 2px; flex-shrink:0; }
 .sheet-head { display:flex; align-items:center; justify-content:space-between; padding:10px 20px 12px; flex-shrink:0; }
 .sheet-title-row { display:flex; align-items:baseline; gap:6px; min-width:0; }
