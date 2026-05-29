@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 
 // Numéro de version affiché sur la home — à incrémenter à chaque déploiement
 // pour vérifier d'un coup d'œil que la PWA a bien chargé la dernière version.
-const APP_VERSION = "0.7";
+const APP_VERSION = "0.8";
 
 const ALL = "toute";
 const SEASON_META = {
@@ -566,28 +566,45 @@ export default function App() {
             courante, sans toucher à l'élément en cours de glisser. */}
         {placing && (
           <div className="drop-overlay">
-            <div className="drop-overlay-head">
-              Dépose <strong>{placing.name}</strong> sur un jour
-              <span className="drop-overlay-week">{isCurrentWeek ? "cette semaine" : weekLabel}</span>
+            <div className="drop-banner">
+              <Icon.utensils width={16} height={16} />
+              <span>Dépose <strong>{placing.name}</strong> sur un jour</span>
             </div>
-            <div className="drop-overlay-days">
-              {DAYS.map((day, i) => (
-                <div key={day.key} className={`drop-day${day.weekend ? " weekend" : ""}`}>
-                  <div className="drop-day-label"><b>{day.short}</b> {weekDates[i].getDate()}</div>
-                  <div className="drop-day-slots">
-                    {slotsFor(day).map(slot => {
-                      const entry = getEntry(day.key, slot.id);
-                      const dk = sk(day.key, slot.id);
-                      return (
-                        <div key={slot.id} data-dropkey={dk}
-                          className={`drop-pill${entry ? " occupied" : ""}${dropKey === dk ? " dragover" : ""}`}>
-                          {entry ? entry.value : slot.label}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+            <div className="week-nav drop-week-nav">
+              <span className="week-center">
+                <span className="week-title">{isCurrentWeek ? "Cette semaine" : weekOffset === -1 ? "Sem. dernière" : weekOffset === 1 ? "Sem. prochaine" : "Semaine"}</span>
+                <span className="week-range">· {weekLabel}</span>
+              </span>
+            </div>
+            <div className="drop-days">
+              {DAYS.map((day, i) => {
+                const date = weekDates[i];
+                const isToday = date.toDateString() === new Date().toDateString();
+                return (
+                  <section key={day.key} className={`day${day.weekend ? " weekend" : ""}${isToday ? " is-today" : ""}`}>
+                    <div className="day-tab">
+                      <span className="day-tab-name">{day.short}</span>
+                      <span className="day-tab-num">{date.getDate()}</span>
+                    </div>
+                    <div className="day-rows">
+                      {slotsFor(day).map(slot => {
+                        const entry = getEntry(day.key, slot.id);
+                        const dk = sk(day.key, slot.id);
+                        return (
+                          <div key={slot.id} data-dropkey={dk}
+                            className={`cell drop-target${entry ? " occupied" : ""}${dropKey === dk ? " dragover" : ""}${slot.id === "lunchbox" ? " lunchbox" : ""}`}>
+                            {entry ? (
+                              <><span className="cell-value">{entry.value}</span><span className="drop-hint">remplacer</span></>
+                            ) : (
+                              <><Icon.plus width={15} height={15} /><span className="drop-hint">{slot.label}</span></>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1138,20 +1155,17 @@ body { background: #0e0e10; }
   background:var(--coral); color:#fff; font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   box-shadow:0 10px 26px rgba(255,92,77,.45); }
 .drag-ghost span { overflow:hidden; text-overflow:ellipsis; }
-/* Calque de dépôt : les 7 jours en cibles, par-dessus la vue courante */
-.drop-overlay { position:fixed; inset:0; z-index:60; background:rgba(14,14,16,.74); backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); display:flex; flex-direction:column; padding:14px calc(14px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left)); gap:10px; touch-action:none; }
-.drop-overlay-head { flex-shrink:0; color:#fff; font-size:14px; text-align:center; padding:4px 6px; line-height:1.3; }
-.drop-overlay-head strong { font-weight:700; }
-.drop-overlay-week { display:block; font-size:11.5px; opacity:.6; margin-top:2px; }
-.drop-overlay-days { flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; }
-.drop-day { flex:1; min-height:0; background:rgba(255,255,255,.07); border-radius:13px; padding:6px 10px; display:flex; align-items:center; gap:10px; }
-.drop-day.weekend { background:rgba(255,92,77,.13); }
-.drop-day-label { width:42px; flex-shrink:0; color:#fff; font-size:12px; text-align:center; opacity:.85; }
-.drop-day-label b { display:block; font-size:13px; }
-.drop-day-slots { flex:1; display:flex; gap:7px; height:100%; }
-.drop-pill { flex:1; min-width:0; display:flex; align-items:center; justify-content:center; padding:0 8px; border-radius:10px; background:var(--soft); color:var(--coral); font-size:12px; font-weight:600; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-shadow:inset 0 0 0 1.5px var(--coral); transition:transform .1s, background .1s, box-shadow .1s; }
-.drop-pill.occupied { background:#fff; color:var(--ink); box-shadow:inset 0 0 0 1.5px var(--ink2); }
-.drop-pill.dragover { background:var(--coral); color:#fff; box-shadow:none; transform:scale(1.05); }
+/* Calque de dépôt : même look que la home (cartes-jours + cellules) */
+.drop-overlay { position:absolute; inset:0; z-index:60; background:var(--bg); display:flex; flex-direction:column;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom)); gap:10px; touch-action:none; }
+.drop-banner { flex-shrink:0; display:flex; align-items:center; gap:8px; background:var(--coral); color:#fff;
+  border-radius:12px; padding:9px 12px; font-size:13.5px; box-shadow:0 4px 14px rgba(255,92,77,.3); }
+.drop-banner strong { font-weight:700; }
+.drop-week-nav { position:static; margin:0; flex-shrink:0; }
+.drop-days { flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto; overscroll-behavior:contain; }
+.drop-days .day { flex:1; min-height:0; padding:7px 2px; }
+.drop-days .day-rows { justify-content:center; gap:5px; }
+.drop-days .cell { min-height:34px; }
 .place-banner { position:sticky; top:0; z-index:11; display:flex; align-items:center; gap:8px; margin:0 0 10px;
   background:var(--coral); color:#fff; border-radius:12px; padding:9px 12px; box-shadow:0 4px 14px rgba(255,92,77,.35); }
 .place-banner-icon { flex-shrink:0; }
